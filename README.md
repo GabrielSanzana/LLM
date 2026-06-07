@@ -28,7 +28,7 @@ El sistema incluye integración con Google Calendar para agendar recordatorios. 
 8. Se descargará un archivo `.json`. Cámbiale el nombre a `credentials.json` y colócalo en la carpeta **`Backend/`** del proyecto (`Backend/credentials.json`).
 
 > [!WARNING]
-> Este archivo contiene llaves privadas y está configurado en el [`.gitignore`](file:///c:/Users/lzamo/Desktop/LLM/.gitignore) para que no sea subido a Git. **Nunca lo expongas en un repositorio público.**
+> Este archivo contiene llaves privadas y está configurado en el [`.gitignore`]para que no sea subido a Git. **Nunca lo expongas en un repositorio público.**
 
 ### 2. Compartir tu Calendario con la Cuenta de Servicio
 Dado que la cuenta de servicio actúa como un usuario virtual independiente, debes otorgarle permisos explícitos sobre el calendario donde deseas crear los eventos:
