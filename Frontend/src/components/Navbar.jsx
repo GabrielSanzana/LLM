@@ -1,13 +1,6 @@
 import React from "react";
 
-export default function Navbar({
-  activeView,
-  switchView,
-  onLoginClick,
-  onRegisterClick, // <-- Agregamos esta prop
-  user,
-  onLogout
-}) {
+export default function Navbar({ activeView, switchView }) {
   return (
     <nav className="bg-white border-b border-gray-200 px-8 py-3 flex justify-between items-center shadow-sm z-50">
 
@@ -26,59 +19,17 @@ export default function Navbar({
         </span>
       </div>
 
-      {/* NAV */}
+      {/* NAV (solo Chat) */}
       <div className="flex gap-1">
-        <button onClick={() => switchView('analysis')}
-          className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all hover:bg-gray-100 ${activeView === 'analysis' ? 'active-nav' : 'text-gray-600'}`}>
-          Analizar PCAP
-        </button>
-
         <button onClick={() => switchView('chat')}
           className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all hover:bg-gray-100 ${activeView === 'chat' ? 'active-nav' : 'text-gray-600'}`}>
           Chat General
         </button>
-
-        <button onClick={() => switchView('sim')}
-          className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all hover:bg-gray-100 ${activeView === 'sim' ? 'active-nav' : 'text-gray-600'}`}>
-          Simulador de Ataques
-        </button>
       </div>
 
-      {/* AUTH */}
+      {/* No auth in simplified app */}
       <div className="flex items-center gap-3">
-
-        {user ? (
-          <>
-            <span className="text-sm font-semibold text-gray-700">
-              👤 {user.nombre}
-            </span>
-
-            <button
-              onClick={onLogout}
-              className="bg-red-600 text-white text-sm font-semibold px-4 py-2 rounded-lg shadow-sm hover:bg-red-700 transition-all"
-            >
-              Cerrar sesión
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={onLoginClick}
-              className="text-sm font-semibold text-gray-600 hover:text-indigo-600 px-3"
-            >
-              Iniciar Sesión
-            </button>
-
-            {/* AHORA EL BOTÓN EJECUTA LA FUNCIÓN */}
-            <button 
-              onClick={onRegisterClick}
-              className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:bg-slate-900 transition-all"
-            >
-              Registrarse
-            </button>
-          </>
-        )}
-
+        <span className="text-sm font-semibold text-gray-700">Usuario: Invitado</span>
       </div>
 
     </nav>
