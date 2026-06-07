@@ -7,9 +7,12 @@ from groq import Groq
 
 # Importación relativa con '.' para evitar fallos de PYTHONPATH en Windows
 from .rag_service import RAGService
+from .google_calendar_service import GoogleCalendarService
+from datetime import datetime
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 rag: Optional[RAGService] = None
+calendar_service: Optional[GoogleCalendarService] = None
 
 # =========================
 # PROMPT BASE (CHILEATIENDE)
@@ -19,8 +22,14 @@ SYSTEM_PROMPT_GENERAL_TUTOR = """
 Eres el asistente virtual experto oficial de ChileAtiende. Tu propósito es guiar de forma clara, empática y resolutiva a los ciudadanos sobre trámites, leyes, subsidios, beneficios y denuncias asociadas a las instituciones públicas del Estado de Chile.
 
 === REGLAS DE OPERACIÓN CON HERRAMIENTAS ===
+*IMPORTANTE*: Para invocar herramientas, utiliza única y exclusivamente el mecanismo nativo de llamadas a funciones (tool calling) del sistema en formato JSON. Está ESTRICTAMENTE PROHIBIDO escribir de forma manual etiquetas de texto como `<function=...>` o marcas XML similares en el texto de tu respuesta para representar una llamada a herramienta.
+
 1. CONSULTA OBLIGATORIA AL RAG: Ante cualquier consulta sobre requisitos, pasos, fechas o detalles de un trámite o ley, debes invocar la herramienta `search_chileatiende_knowledge` antes de responder. Está prohibido responder datos técnicos de memoria.
-2. RECORDATORIOS INTELIGENTES: Si el usuario solicita agendar, anotar o recordar un evento o trámite, invoca la herramienta `crear_recordatorio`, infiriendo el contexto y los datos necesarios a partir del historial reciente de la conversación.
+2. RECORDATORIOS INTELIGENTES Y GOOGLE CALENDAR: Si el usuario solicita agendar, anotar o recordar un trámite, debes:
+   - Extraer la lista de requisitos y documentos necesarios desde el historial de conversación (es decir, el contexto recuperado por RAG en mensajes anteriores). Si el RAG no se ha consultado en esta conversación para este trámite, primero debes invocar la herramienta `search_chileatiende_knowledge` para buscar sus requisitos oficiales.
+   - Si no tienes el correo del usuario, debes preguntarle explícitamente: "¿A qué correo electrónico te envío la invitación para el recordatorio?". No intentes invocar `crear_recordatorio` si no tienes el correo del usuario.
+   - Si no tienes clara la fecha u hora en la que quiere agendar, pregúntale.
+   - Una vez que tengas el trámite, los documentos, la fecha y hora calculada (convertida por ti a formato ISO 8601 YYYY-MM-DDTHH:MM:SS basándote en la fecha y hora actual del sistema que se te proporciona), y el correo del usuario, invoca la herramienta `crear_recordatorio`.
 
 === CLASIFICACIÓN DE RESPUESTAS SEGÚN EL CONTEXTO ===
 - ESCENARIO A (Información disponible en el RAG): Sintetiza los datos entregados por la herramienta de forma clara y estructurada. Detalla canales de atención, requisitos (como ClaveÚnica) y costos.
@@ -118,20 +127,28 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "crear_recordatorio",
-            "description": "Crea un recordatorio en la agenda del usuario. Úsalo cuando el usuario diga 'recuérdamelo', 'agenda eso', etc.",
+            "description": "Crea un recordatorio en Google Calendar y envía una invitación al correo del usuario. Requiere el correo, el trámite, los documentos necesarios extraídos del RAG y la fecha/hora específica.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "tramite": {
                         "type": "string", 
-                        "description": "El trámite deducido de la memoria a corto plazo de la conversación (ej. 'Renovación de cédula')."
+                        "description": "El nombre del trámite a recordar (ej. 'Renovación de cédula de identidad')."
                     },
                     "fecha_hora": {
                         "type": "string", 
-                        "description": "La fecha o momento en que se debe recordar (ej. 'Mañana a las 10am'). Si no se especifica, usa 'Próximamente'."
+                        "description": "La fecha y hora del evento. Debe ser convertida por ti a formato ISO 8601 (YYYY-MM-DDTHH:MM:SS) basándote en la fecha y hora actual del sistema. Si el usuario no especificó hora, asume las 09:00:00."
+                    },
+                    "email": {
+                        "type": "string",
+                        "description": "El correo electrónico del usuario al cual enviar la invitación."
+                    },
+                    "documentos": {
+                        "type": "string",
+                        "description": "La lista de documentos y requisitos necesarios para el trámite, recuperados de la base de conocimientos (RAG) en los mensajes anteriores de la conversación."
                     }
                 },
-                "required": ["tramite"]
+                "required": ["tramite", "fecha_hora", "email", "documentos"]
             }
         }
     }
@@ -154,14 +171,22 @@ def get_response(
     history: Optional[List[Dict[str, str]]] = None,
     max_steps: int = 2
 ) -> Dict[str, Any]:
-    global rag
+    global rag, calendar_service
     if rag is None:
         rag = RAGService()
+    if calendar_service is None:
+        calendar_service = GoogleCalendarService()
 
     model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
     
+    dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+    ahora = datetime.now()
+    nombre_dia = dias_semana[ahora.weekday()]
+    current_time_str = f"{nombre_dia}, {ahora.strftime('%Y-%m-%d %H:%M:%S')}"
+    system_prompt = SYSTEM_PROMPT_GENERAL_TUTOR + f"\n\n[SISTEMA]: La fecha y hora actual del sistema es: {current_time_str}. Úsala para calcular fechas relativas como 'mañana', 'lunes', etc."
+
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT_GENERAL_TUTOR}
+        {"role": "system", "content": system_prompt}
     ]
 
     # Cargar el historial conversacional reciente
@@ -186,75 +211,78 @@ def get_response(
 
         response_message = response.choices[0].message
         if not response_message.tool_calls:
+            trace.append({
+                "type": "final_answer",
+                "content": response_message.content
+            })
             return {
                 "response": response_message.content,
                 "trace": trace
             }
-        # Caso en que el modelo decide buscar información técnica del trámite en ChromaDB
-        if response_message.tool_calls:
-            messages.append(response_message)
 
-            for tool_call in response_message.tool_calls:
-                function_name = tool_call.function.name
-                arguments = json.loads(tool_call.function.arguments)
+        messages.append(response_message)
 
+        for tool_call in response_message.tool_calls:
+            function_name = tool_call.function.name
+            arguments = json.loads(tool_call.function.arguments)
+
+            trace.append({
+                "type": "tool_call",
+                "function": function_name,
+                "arguments": arguments
+            })
+
+            if function_name == "search_chileatiende_knowledge":
+                queries_optimizadas = generar_mqr(arguments["query"])
                 trace.append({
-                    "type": "tool_call",
-                    "function": function_name,
-                    "arguments": arguments
+                    "type": "mqr_generated",
+                    "queries": queries_optimizadas
                 })
 
-                if function_name == "search_chileatiende_knowledge":
-                    # Expansión MQR y búsqueda abierta
-                    queries_optimizadas = generar_mqr(arguments["query"])
-                    trace.append({
-                        "type": "mqr_expansion",
-                        "expanded_queries": queries_optimizadas
-                    })
+                observation = busqueda_semantica_abierta(queries_optimizadas, arguments["query"])
+                observation = _clip_text(observation, 3000)
 
-                    # Busca esta línea dentro de get_tutor_response:
-                    observation = busqueda_semantica_abierta(queries_optimizadas, arguments["query"])
-                    observation = _clip_text(observation, 3000)
+            elif function_name == "crear_recordatorio":
+                tramite = arguments.get("tramite", "Trámite desconocido")
+                fecha = arguments.get("fecha_hora", "Sin fecha")
+                email = arguments.get("email")
+                documentos = arguments.get("documentos", "")
+                
+                res = calendar_service.create_reminder_event(
+                    tramite=tramite,
+                    fecha_hora_str=fecha,
+                    email=email,
+                    documentos=documentos
+                )
+                observation = res.get("message", "Error al procesar recordatorio.")
+            else:
+                observation = "Herramienta no soportada."
 
-                elif function_name == "crear_recordatorio":
-                    tramite = arguments.get("tramite", "Trámite desconocido")
-                    fecha = arguments.get("fecha_hora", "Sin fecha")
-                    observation = f"✅ Éxito: Recordatorio guardado en sistema para '{tramite}' ({fecha})."
-                else:
-                    observation = "Herramienta no soportada."
+            trace.append({
+                "type": "tool_message",
+                "result": observation
+            })
 
-                trace.append({
-                    "type": "tool_response",
-                    "query_usada": arguments.get("query"),
-                    "longitud_resultado": len(observation)
-                })
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "name": function_name,
+                "content": observation
+            })
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "name": function_name,
-                    "content": observation
-                })
+    # Llamada final al LLM para responder con todo el contexto acumulado
+    final_response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=0.3
+    )
 
-            # Respuesta analítica final al ciudadano con los datos inyectados por el RAG
-            final_response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.3
-            )
-
-            return {
-                "response": final_response.choices[0].message.content,
-                "trace": trace
-            }
-
-        # Caso en el que el modelo responde directamente (saludos, aclaraciones libres, etc.)
-        return {
-            "response": response_message.content,
-            "trace": trace
-        }
+    trace.append({
+        "type": "final_answer",
+        "content": final_response.choices[0].message.content
+    })
 
     return {
-        "response": "Lo sentimos, ocurrió un error interno al procesar su solicitud en este momento.",
+        "response": final_response.choices[0].message.content,
         "trace": trace
     }

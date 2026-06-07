@@ -13,6 +13,32 @@ A continuación, se detallan las instrucciones paso a paso para configurar y eje
    copy .env.copy .env
    ```
 
+## 📅 Configuración de Google Calendar API (Recordatorios)
+
+El sistema incluye integración con Google Calendar para agendar recordatorios. Para habilitarlo, debes configurar las credenciales de una **Cuenta de Servicio (Service Account)** de Google:
+
+### 1. Generar el archivo de credenciales (`credentials.json`)
+1. Ingresa a [Google Cloud Console](https://console.cloud.google.com/).
+2. Crea un nuevo proyecto (o selecciona uno existente).
+3. Dirígete a **API y servicios** > **Biblioteca**, busca **Google Calendar API** y haz clic en **Habilitar**.
+4. Ve a **IAM y administración** > **Cuentas de servicio** y haz clic en **Crear cuenta de servicio**.
+5. Completa los detalles (ej. nombre: `calendar-agent`), haz clic en **Crear y continuar** y luego en **Listo**.
+6. Haz clic en la cuenta de servicio recién creada en la lista y entra a la pestaña **Claves** (Keys).
+7. Haz clic en **Agregar clave** > **Crear clave nueva**. Selecciona el formato **JSON** y presiona **Crear**.
+8. Se descargará un archivo `.json`. Cámbiale el nombre a `credentials.json` y colócalo en la carpeta **`Backend/`** del proyecto (`Backend/credentials.json`).
+
+> [!WARNING]
+> Este archivo contiene llaves privadas y está configurado en el [`.gitignore`](file:///c:/Users/lzamo/Desktop/LLM/.gitignore) para que no sea subido a Git. **Nunca lo expongas en un repositorio público.**
+
+### 2. Compartir tu Calendario con la Cuenta de Servicio
+Dado que la cuenta de servicio actúa como un usuario virtual independiente, debes otorgarle permisos explícitos sobre el calendario donde deseas crear los eventos:
+1. Abre tu archivo `credentials.json` recién descargado y copia el valor del campo `"client_email"` (que termina en `@tu-proyecto.iam.gserviceaccount.com`).
+2. Abre [Google Calendar](https://calendar.google.com/) en tu navegador.
+3. En la barra lateral izquierda, busca el calendario que vas a utilizar, haz clic en los tres puntos y selecciona **Configuración y uso compartido**.
+4. Desplázate hasta la sección **Compartir con personas o grupos específicos** y haz clic en **Agregar personas**.
+5. Pega el correo de la cuenta de servicio copiado en el paso 1.
+6. En la opción de permisos, selecciona **Realizar cambios en eventos** (este permiso es obligatorio para que el agente pueda agendar).
+7. Guarda los cambios.
 
 
 ## 🚀 1. Configuración del Backend (Python/FastAPI)
