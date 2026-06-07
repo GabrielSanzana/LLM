@@ -1,47 +1,48 @@
 import os
 import json
-from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
 
-try:
-    from groq import Groq
-except ImportError:
-    Groq = None
+# pyrefly: ignore [missing-import]
+from groq import Groq
 
-# Intentamos importar librerías para Búsqueda Semántica
-try:
-    import chromadb
-    from chromadb.utils import embedding_functions
-except ImportError:
-    chromadb = None
+# Importación relativa con '.' para evitar fallos de PYTHONPATH en Windows
+from .rag_service import RAGService
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-from dotenv import load_dotenv
-load_dotenv(BASE_DIR.parent / ".env")
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+rag: Optional[RAGService] = None
 
-# --- CONFIGURACIÓN DE BÚSQUEDA SEMÁNTICA (ChromaDB) ---
-# En un entorno real, inicializarías ChromaDB una vez al arrancar la app.
-if chromadb:
-    chroma_client = chromadb.Client()
-    # Usamos un modelo de embeddings ligero multilingüe
-    emb_fn = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="paraphrase-multilingual-MiniLM-L12-v2")
-    collection = chroma_client.get_or_create_collection(name="registro_civil_docs", embedding_function=emb_fn)
-    
-    # Simulación: Agregamos documentos a la DB Vectorial si está vacía
-    if collection.count() == 0:
-        collection.add(
-            documents=[
-                "Para hacer una denuncia en el Registro Civil por pérdida de documentos, se requiere identificación oficial y comprobante de domicilio.",
-                "Para el matrimonio civil, los contrayentes deben presentar cédula de identidad, certificado de soltería y dos testigos.",
-                "La corrección de errores en actas de nacimiento requiere un proceso administrativo y el documento probatorio original."
-            ],
-            metadatas=[{"source": "denuncias.txt"}, {"source": "matrimonio.txt"}, {"source": "correcciones.txt"}],
-            ids=["doc1", "doc2", "doc3"]
-        )
+# =========================
+# PROMPT BASE (CHILEATIENDE)
+# =========================
 
+SYSTEM_PROMPT_GENERAL_TUTOR = """
+Eres el asistente virtual experto oficial de ChileAtiende. Tu propósito es guiar de forma clara, empática y resolutiva a los ciudadanos sobre trámites, leyes, subsidios, beneficios y denuncias asociadas a las instituciones públicas del Estado de Chile.
 
-def generar_mqr(user_query: str, client: Groq, model: str) -> List[str]:
-    """Genera 3 variaciones de la consulta usando MQR."""
+=== REGLAS DE OPERACIÓN CON HERRAMIENTAS ===
+1. CONSULTA OBLIGATORIA AL RAG: Ante cualquier consulta sobre requisitos, pasos, fechas o detalles de un trámite o ley, debes invocar la herramienta `search_chileatiende_knowledge` antes de responder. Está prohibido responder datos técnicos de memoria.
+2. RECORDATORIOS INTELIGENTES: Si el usuario solicita agendar, anotar o recordar un evento o trámite, invoca la herramienta `crear_recordatorio`, infiriendo el contexto y los datos necesarios a partir del historial reciente de la conversación.
+
+=== CLASIFICACIÓN DE RESPUESTAS SEGÚN EL CONTEXTO ===
+- ESCENARIO A (Información disponible en el RAG): Sintetiza los datos entregados por la herramienta de forma clara y estructurada. Detalla canales de atención, requisitos (como ClaveÚnica) y costos.
+- ESCENARIO B (Información ausente en el RAG pero de ámbito público/estatal): Si la consulta legítimamente corresponde al ecosistema público, legal o institucional chileno pero la herramienta no arrojó registros, ofrece una orientación conceptual básica basada en tu conocimiento institucional general. Identifica qué organismo del Estado podría gestionarlo y sugiere amablemente al ciudadano verificar los canales oficiales directos o llamar al Call Center 101.
+- ESCENARIO C (Temáticas fuera de foco o comerciales): Si el usuario pregunta por temas recreativos, corporativos privados, entretenimiento, marcas comerciales, cultura pop o materias ajenas al servicio público (ej. videojuegos, series, bandas, etc.), debes responder de forma cortante indicando que tu rol se limita estrictamente a la orientación institucional del Estado de Chile. ESTÁ ESTRICTAMENTE PROHIBIDO definir el concepto ajeno, explicar su origen, dar ejemplos de él o continuar la conversación sobre ese tema de entretenimiento.
+
+=== FORMATO DE ENTREGA (ESTRICTO) ===
+- Redacta tu respuesta final de forma directa, natural y ciudadana, orientada al usuario.
+- Está estrictamente prohibido incluir en tu mensaje final tus pasos de pensamiento interno (Thought), análisis lógicos, llamadas a funciones o marcas de procesamiento técnico. El ciudadano solo debe ver la respuesta limpia.
+"""
+
+# =========================
+# LÓGICA DE MULTI-QUERY RETRIEVAL (MQR)
+# =========================
+
+def generar_mqr(user_query: str) -> List[str]:
+    """
+    Genera Multi-Query Rewriting (MQR):
+    1 formal
+    1 requisitos/documentos
+    1 semántico/técnico
+    """
     prompt = f"""
     Usuario: "{user_query}"
 
@@ -56,6 +57,7 @@ def generar_mqr(user_query: str, client: Groq, model: str) -> List[str]:
     - Una por línea
     """
     try:
+        model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
         resp = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
@@ -63,34 +65,34 @@ def generar_mqr(user_query: str, client: Groq, model: str) -> List[str]:
         )
         texto = resp.choices[0].message.content.strip()
         variantes = [v.strip("- *").strip() for v in texto.split("\n") if v.strip()]
-        # Asegurar que la original también esté
+        
         return variantes[:3] + [user_query]
     except Exception as e:
-        print(f"Error en MQR: {e}")
+        print(f"Error en generación MQR: {e}")
         return [user_query]
 
 
-def busqueda_semantica(queries: List[str], k: int = 2) -> str:
-    """Busca en la base de datos vectorial usando las consultas generadas."""
-    if not chromadb:
-        return "[Aviso] Búsqueda semántica no disponible. Instale chromadb y sentence-transformers."
-    
-    try:
-        # Buscamos usando todas las variaciones MQR
-        results = collection.query(query_texts=queries, n_results=k)
+def busqueda_semantica_abierta(queries: List[str], user_query: str) -> str:
+    """Ejecuta la búsqueda en el RAG y retorna banderas claras al LLM."""
+    global rag
+    if rag is None:
+        rag = RAGService()
         
-        # Consolidar resultados únicos
-        documentos_encontrados = set()
-        for doc_list in results["documents"]:
-            for doc in doc_list:
-                documentos_encontrados.add(doc)
-                
-        if not documentos_encontrados:
-            return "No se encontraron documentos relevantes en la base de conocimiento."
+    resultados_unicos = set()
+    
+    for q in queries:
+        contexto_parcial = rag.get_knowledge(q)
+        if contexto_parcial and contexto_parcial.strip():
+            resultados_unicos.add(contexto_parcial.strip())
             
-        return "\n\n".join([f"- {doc}" for doc in documentos_encontrados])
-    except Exception as e:
-        return f"Error en búsqueda vectorial: {str(e)}"
+    # SI EL RAG ESTÁ VACÍO: Le damos un mensaje estructurado al LLM para que sepa diferenciar
+    if not resultados_unicos:
+        return f"""
+        [SISTEMA RAG]: No se encontraron documentos exactos en ChromaDB para la consulta: "{user_query}".
+        INSTRUCCIÓN PARA EL LLM: Si la consulta del usuario parece ser un trámite, ley o institución pública real (aunque no tengamos el documento), ofrece disculpas e invita al usuario a consultar directamente en los sitios web del gobierno o llamar al 101. No asumas que es un tema comercial a menos que sea explícitamente algo ajeno al Estado.
+        """
+        
+    return "\n\n--- Información Oficial Encontrada ---\n\n".join(resultados_unicos)
 
 
 # --- DEFINICIÓN DE HERRAMIENTAS (Function Calling) ---
@@ -98,7 +100,7 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "search_docs",
+            "name": "search_chileatiende_knowledge",
             "description": "Realiza una búsqueda semántica en la base de conocimientos del Registro Civil. Usa esta herramienta para buscar requisitos, procesos o leyes.",
             "parameters": {
                 "type": "object",
@@ -135,32 +137,42 @@ TOOLS = [
     }
 ]
 
+def _clip_text(text: str, max_len: int = 2500) -> str:
+    if not text:
+        return ""
+    if len(text) <= max_len:
+        return text
+    return text[:max_len] + "\n...[TRUNCADO CONTEXTO RAG]..."
 
-def get_response(user_message: str, history: List[Dict[str, str]] = None, max_steps: int = 3) -> Dict[str, Any]:
-    """Proceso de Tool Calling nativo. Retorna respuesta limpia y un trace para la consola."""
-    history = history or []
+
+# =========================
+# FUNCIÓN PRINCIPAL DE ATENCIÓN (CHAT GENERAL)
+# =========================
+
+def get_response(
+    user_message: str,
+    history: Optional[List[Dict[str, str]]] = None,
+    max_steps: int = 2
+) -> Dict[str, Any]:
+    global rag
+    if rag is None:
+        rag = RAGService()
+
     model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-    api_key = os.getenv("GROQ_API_KEY")
+    
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT_GENERAL_TUTOR}
+    ]
 
-    if Groq is None or not api_key:
-        return {"response": "[ERROR] Configure Groq correctamente.", "trace": []}
+    # Cargar el historial conversacional reciente
+    if history:
+        for m in history[-8:]:
+            messages.append({
+                "role": m.get("role", "user"),
+                "content": m.get("content", "")
+            })
 
-    client = Groq(api_key=api_key)
-
-    system_prompt = (
-        "Eres un asistente del Registro Civil. "
-        "Usa las herramientas proporcionadas para buscar información antes de responder. "
-        "Si el usuario pide que le recuerdes algo ('agenda eso', 'recuérdamelo'), usa la herramienta crear_recordatorio "
-        "infiriendo el trámite desde el historial de la conversación. "
-        "Responde de forma amable y directa al usuario sin mostrar tus pasos de pensamiento."
-    )
-
-    messages = [{"role": "system", "content": system_prompt}]
-    # Cargar memoria a corto plazo (clave para "recuérdamelo")
-    for m in history[-10:]:
-        messages.append({"role": m.get("role", "user"), "content": m.get("content", "")})
     messages.append({"role": "user", "content": user_message})
-
     trace = []
 
     for step in range(max_steps):
@@ -169,61 +181,80 @@ def get_response(user_message: str, history: List[Dict[str, str]] = None, max_st
             messages=messages,
             tools=TOOLS,
             tool_choice="auto",
-            temperature=0.2
+            temperature=0.4
         )
-        
+
         response_message = response.choices[0].message
-        
-        # Si el modelo decide usar una herramienta (Action)
+        if not response_message.tool_calls:
+            return {
+                "response": response_message.content,
+                "trace": trace
+            }
+        # Caso en que el modelo decide buscar información técnica del trámite en ChromaDB
         if response_message.tool_calls:
-            messages.append(response_message) # Agregar la petición de tool_call al historial
-            
+            messages.append(response_message)
+
             for tool_call in response_message.tool_calls:
                 function_name = tool_call.function.name
                 arguments = json.loads(tool_call.function.arguments)
-                
-                # LOG: Mostrar ejecución de herramienta
+
                 trace.append({
-                    "type": "tool_call", 
-                    "function": function_name, 
+                    "type": "tool_call",
+                    "function": function_name,
                     "arguments": arguments
                 })
 
-                if function_name == "search_docs":
-                    # 1. Aplicar MQR
-                    variantes_mqr = generar_mqr(arguments["query"], client, model)
-                    trace.append({"type": "mqr_generated", "queries": variantes_mqr})
-                    
-                    # 2. Búsqueda Semántica
-                    observation = busqueda_semantica(variantes_mqr)
-                    
+                if function_name == "search_chileatiende_knowledge":
+                    # Expansión MQR y búsqueda abierta
+                    queries_optimizadas = generar_mqr(arguments["query"])
+                    trace.append({
+                        "type": "mqr_expansion",
+                        "expanded_queries": queries_optimizadas
+                    })
+
+                    # Busca esta línea dentro de get_tutor_response:
+                    observation = busqueda_semantica_abierta(queries_optimizadas, arguments["query"])
+                    observation = _clip_text(observation, 3000)
+
                 elif function_name == "crear_recordatorio":
-                    # Simulación de agendar gracias a la Memoria a corto plazo
                     tramite = arguments.get("tramite", "Trámite desconocido")
                     fecha = arguments.get("fecha_hora", "Sin fecha")
                     observation = f"✅ Éxito: Recordatorio guardado en sistema para '{tramite}' ({fecha})."
-
                 else:
-                    observation = "Herramienta desconocida."
+                    observation = "Herramienta no soportada."
 
-                # LOG: Mostrar resultado (Observation)
-                trace.append({"type": "tool_message", "result": observation})
-                
-                # Devolver el resultado de la herramienta al modelo
+                trace.append({
+                    "type": "tool_response",
+                    "query_usada": arguments.get("query"),
+                    "longitud_resultado": len(observation)
+                })
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
                     "name": function_name,
                     "content": observation
                 })
-                
-            # Continuar el bucle para que el modelo lea la 'Observation' y genere la 'Final Answer'
-            continue
 
-        # Si no hay tool_calls, significa que es la respuesta final para el usuario
-        final_answer = response_message.content
-        trace.append({"type": "final_answer", "content": final_answer})
-        
-        return {"response": final_answer, "trace": trace}
+            # Respuesta analítica final al ciudadano con los datos inyectados por el RAG
+            final_response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.3
+            )
 
-    return {"response": "Lo siento, me tomó demasiados pasos procesar tu solicitud.", "trace": trace}
+            return {
+                "response": final_response.choices[0].message.content,
+                "trace": trace
+            }
+
+        # Caso en el que el modelo responde directamente (saludos, aclaraciones libres, etc.)
+        return {
+            "response": response_message.content,
+            "trace": trace
+        }
+
+    return {
+        "response": "Lo sentimos, ocurrió un error interno al procesar su solicitud en este momento.",
+        "trace": trace
+    }

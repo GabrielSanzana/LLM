@@ -1,4 +1,4 @@
-# NetTutor
+# Proyecto LLM
 
 Este proyecto está dividido en dos partes principales:
 - **Backend**: Construido con Python y FastAPI.
