@@ -82,28 +82,50 @@ export default function ChatView({ switchView }) {
       const data = await res.json();
 
       // =======================================================================
-      // PROCESAMIENTO Y AGRUPACIÓN EN CONSOLE.LOG DEL FLUJO DE AGENTE (TRACE)
+      // PROCESAMIENTO Y AGRUPACIÓN EN CONSOLE.LOG DEL FLUJO PLAN-AND-EXECUTE
       // =======================================================================
       if (data.trace && Array.isArray(data.trace)) {
-        console.group(`%c🤖 Flujo ReAct / Tool Calling para: "${userMsg}"`, "color: #4f46e5; font-weight: bold; font-size: 12px;");
+        console.group(`%c📋 Plan-and-Execute: Flujo para "${userMsg}"`, "color: #0f766e; font-weight: bold; font-size: 13px;");
         
-        data.trace.forEach((step, index) => {
-          if (step.type === "tool_call") {
-            console.group(`%c🔧 Paso ${index + 1}: El LLM decidió usar una Herramienta`, "color: #b45309; font-weight: bold;");
-            console.log(`%cHerramienta (Tool Call):%c ${step.function}`, "font-weight: bold; color: #6b7280;", "color: #047857; font-family: monospace;");
-            console.log(`%cArgumentos Estructurados:`, "font-weight: bold; color: #6b7280;", step.arguments);
+        data.trace.forEach((step) => {
+          if (step.type === "plan_generated") {
+            console.group(`%c🗺️ Plan Generado por el Planificador`, "color: #0d9488; font-weight: bold;");
+            step.plan.forEach((p) => {
+              console.log(
+                `%cPaso ${p.step_id}%c: ${p.description} %c(Herramienta esperada: ${p.tool_expected})`,
+                "font-weight: bold; color: #0f766e;",
+                "color: #1f2937;",
+                "color: #6b7280; font-style: italic;"
+              );
+            });
             console.groupEnd();
-          } 
+          }
+          else if (step.type === "executing_step") {
+            console.group(`%c🚀 Ejecutando Paso ${step.step_id}: "${step.description}"`, "color: #b45309; font-weight: bold;");
+          }
+          else if (step.type === "tool_call") {
+            console.log(`%cHerramienta llamada:%c ${step.function}`, "font-weight: bold; color: #4b5563;", "color: #047857; font-family: monospace;");
+            console.log(`%cArgumentos enviados:`, "font-weight: bold; color: #4b5563;", step.arguments);
+          }
           else if (step.type === "mqr_generated") {
-            console.log(`%c🔀 Multi-Query Rewriting (Variaciones creadas):`, "font-weight: bold; color: #6366f1;", step.queries);
-          } 
+            console.log(`%c🔀 Multi-Query Rewriting (Variaciones RAG):`, "font-weight: bold; color: #6366f1;", step.queries);
+          }
           else if (step.type === "tool_message") {
-            console.group(`%c📄 Respuesta de la Función Ejecutada (Observation)`, "color: #0369a1; font-weight: bold;");
-            console.log(`%cResultado devuelto al LLM (tool_message):%c ${step.result}`, "font-weight: bold; color: #6b7280;", "color: #1e293b;");
-            console.groupEnd();
-          } 
+            console.log(`%cResultado de Herramienta:`, "font-weight: bold; color: #4b5563;");
+            console.log(`%c${step.result}`, "color: #1e293b;");
+            console.groupEnd(); // Cierra el grupo del paso actual
+          }
+          else if (step.type === "step_completed_text") {
+            console.log(`%cResultado del paso (Texto):`, "font-weight: bold; color: #4b5563;");
+            console.log(`%c${step.content}`, "color: #1e293b;");
+            console.groupEnd(); // Cierra el grupo del paso actual
+          }
+          else if (step.type === "step_error") {
+            console.error(`❌ Error en Paso ${step.step_id}: ${step.error}`);
+            console.groupEnd(); // Cierra el grupo del paso actual
+          }
           else if (step.type === "final_answer") {
-            console.log(`%c✅ Respuesta Final Generada para el Usuario:`, "font-weight: bold; color: #059669;", step.content);
+            console.log(`%c✅ Síntesis Final Generada por el Asistente:`, "font-weight: bold; color: #0d9488;", step.content);
           }
         });
         
