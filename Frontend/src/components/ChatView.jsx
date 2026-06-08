@@ -85,39 +85,41 @@ export default function ChatView({ switchView }) {
       // PROCESAMIENTO Y AGRUPACIÓN EN CONSOLE.LOG DEL FLUJO PLAN-AND-EXECUTE
       // =======================================================================
       if (data.trace && Array.isArray(data.trace)) {
-        console.group(`%c📋 Plan-and-Execute: Flujo para "${userMsg}"`, "color: #0f766e; font-weight: bold; font-size: 13px;");
+        console.group(`%c📋 Plan-and-Execute: Flujo para "${userMsg}"`, "color: #14b8a6; font-weight: bold; font-size: 13px;");
         
         data.trace.forEach((step) => {
           if (step.type === "plan_generated") {
-            console.group(`%c🗺️ Plan Generado por el Planificador`, "color: #0d9488; font-weight: bold;");
+            console.group(`%c🗺️ Plan Generado por el Planificador`, "color: #2dd4bf; font-weight: bold;");
             step.plan.forEach((p) => {
               console.log(
-                `%cPaso ${p.step_id}%c: ${p.description} %c(Herramienta esperada: ${p.tool_expected})`,
-                "font-weight: bold; color: #0f766e;",
-                "color: #1f2937;",
-                "color: #6b7280; font-style: italic;"
+                `%cPaso ${p.step_id}%c: ${p.description} %c[Herramienta esperada: ${p.tool_expected}]`,
+                "font-weight: bold; color: #2dd4bf;",
+                "", // Estilo por defecto (legible en tema claro y oscuro)
+                "color: #94a3b8; font-style: italic;" // Gris suave para los metadatos
               );
             });
             console.groupEnd();
           }
           else if (step.type === "executing_step") {
-            console.group(`%c🚀 Ejecutando Paso ${step.step_id}: "${step.description}"`, "color: #b45309; font-weight: bold;");
+            console.group(`%c🚀 Ejecutando Paso ${step.step_id}: "${step.description}"`, "color: #fb923c; font-weight: bold;");
           }
           else if (step.type === "tool_call") {
-            console.log(`%cHerramienta llamada:%c ${step.function}`, "font-weight: bold; color: #4b5563;", "color: #047857; font-family: monospace;");
-            console.log(`%cArgumentos enviados:`, "font-weight: bold; color: #4b5563;", step.arguments);
+            console.log(`%cHerramienta llamada:%c ${step.function}`, "font-weight: bold; color: #38bdf8;", "color: #34d399; font-family: monospace;");
+            console.log(`%cArgumentos enviados:`, "font-weight: bold; color: #38bdf8;");
+            console.log(step.arguments); // Representación nativa del objeto (legible y desplegable)
           }
           else if (step.type === "mqr_generated") {
-            console.log(`%c🔀 Multi-Query Rewriting (Variaciones RAG):`, "font-weight: bold; color: #6366f1;", step.queries);
+            console.log(`%c🔀 Multi-Query Rewriting (Variaciones RAG):`, "font-weight: bold; color: #818cf8;");
+            console.log(step.queries); // Representación nativa de la lista
           }
           else if (step.type === "tool_message") {
-            console.log(`%cResultado de Herramienta:`, "font-weight: bold; color: #4b5563;");
-            console.log(`%c${step.result}`, "color: #1e293b;");
+            console.log(`%cResultado de Herramienta:`, "font-weight: bold; color: #38bdf8;");
+            console.log(step.result); // Texto por defecto (legible en tema claro y oscuro)
             console.groupEnd(); // Cierra el grupo del paso actual
           }
           else if (step.type === "step_completed_text") {
-            console.log(`%cResultado del paso (Texto):`, "font-weight: bold; color: #4b5563;");
-            console.log(`%c${step.content}`, "color: #1e293b;");
+            console.log(`%cResultado del paso (Texto):`, "font-weight: bold; color: #38bdf8;");
+            console.log(step.content); // Texto por defecto
             console.groupEnd(); // Cierra el grupo del paso actual
           }
           else if (step.type === "step_error") {
@@ -125,7 +127,8 @@ export default function ChatView({ switchView }) {
             console.groupEnd(); // Cierra el grupo del paso actual
           }
           else if (step.type === "final_answer") {
-            console.log(`%c✅ Síntesis Final Generada por el Asistente:`, "font-weight: bold; color: #0d9488;", step.content);
+            console.log(`%c✅ Síntesis Final Generada por el Asistente:`, "font-weight: bold; color: #2dd4bf;");
+            console.log(step.content);
           }
         });
         

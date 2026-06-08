@@ -1,8 +1,15 @@
 import os
 import json
+import re
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 from groq import Groq
+
+def clean_think_tags(text: str) -> str:
+    if not text:
+        return ""
+    # Eliminar bloques <think>...</think> (insensible a mayúsculas, multilínea)
+    return re.sub(r'(?i)<think>.*?</think>', '', text, flags=re.DOTALL).strip()
 
 from .rag_service import RAGService
 from .google_calendar_service import GoogleCalendarService
@@ -294,6 +301,7 @@ def get_response(
             else:
                 # El paso se completó sin herramientas (pensamiento o respuesta directa del ejecutor)
                 step_content = resp_message.content or "Paso procesado sin salida escrita."
+                step_content = clean_think_tags(step_content)
                 previous_steps_context += f"- Paso {step_id} ({step_desc}): {step_content}\n"
                 results_summary_list.append(f"Paso {step_id} - {step_desc}: {step_content}")
                 
@@ -343,6 +351,7 @@ def get_response(
             temperature=0.3
         )
         response_text = final_resp.choices[0].message.content.strip()
+        response_text = clean_think_tags(response_text)
     except Exception as e:
         response_text = f"Lo siento, logré procesar tus requerimientos pero ocurrió un problema al redactar la respuesta final: {str(e)}"
         
