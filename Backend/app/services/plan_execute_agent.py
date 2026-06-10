@@ -11,6 +11,23 @@ def clean_think_tags(text: str) -> str:
     # Eliminar bloques <think>...</think> (insensible a mayúsculas, multilínea)
     return re.sub(r'(?i)<think>.*?</think>', '', text, flags=re.DOTALL).strip()
 
+def call_groq_with_retry(**kwargs) -> Any:
+    import time
+    max_retries = 4
+    for attempt in range(max_retries):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except Exception as e:
+            err_msg = str(e)
+            if "429" in err_msg or "rate_limit" in err_msg.lower() or "rate limit" in err_msg.lower():
+                wait_time = (attempt + 1) * 2
+                print(f"[Groq Retry] Rate Limit (429) detectado. Reintentando en {wait_time}s... (Intento {attempt+1}/{max_retries})")
+                time.sleep(wait_time)
+                continue
+            else:
+                raise e
+    return client.chat.completions.create(**kwargs)
+
 from .rag_service import RAGService
 from .google_calendar_service import GoogleCalendarService
 from .react_agent import generar_mqr, busqueda_semantica_abierta, _clip_text
@@ -32,7 +49,9 @@ Herramientas y capacidades disponibles:
 
 Reglas de Planificación:
 - Si el usuario pregunta por los requisitos, fechas o detalles de un trámite, el primer paso debe ser SIEMPRE realizar una búsqueda semántica (`search_chileatiende_knowledge`).
-- Si el usuario solicita agendar un recordatorio, debes planificar primero la búsqueda en RAG para tener los requisitos oficiales, y luego planificar la creación del recordatorio (`crear_recordatorio`).
+- Si el usuario solicita agendar un recordatorio, debes comprobar en la conversación anterior (el historial) si ya se han detallado los requisitos oficiales del trámite:
+  - Si los requisitos NO se encuentran en los mensajes previos, debes planificar primero la búsqueda en RAG (`search_chileatiende_knowledge`) para obtenerlos, y luego la creación del recordatorio (`crear_recordatorio`).
+  - Si los requisitos ya fueron explicados y constan en el historial conversacional previo, NO debes planificar la búsqueda en RAG; planifica únicamente la creación del recordatorio (`crear_recordatorio`) o solicitar información adicional (ej: el correo) si falta.
 - Si para agendar el recordatorio el usuario NO ha entregado su correo electrónico, NO debes planificar la creación de la cita, sino agregar un paso de solicitud de información para pedir el correo electrónico al ciudadano.
 - Tu salida debe ser exclusivamente un objeto JSON estructurado con una clave "plan" que contenga la lista de pasos. Cada paso debe tener:
   - `step_id`: Número de paso secuencial (empezando en 1).
@@ -64,8 +83,9 @@ Para lograr tu objetivo, debes analizar el paso actual y el contexto acumulado d
 
 === CONTEXTO DE EJECUCIÓN ===
 - Consulta original del usuario: {user_message}
-- Historial de pasos completados y sus resultados:
+- Historial de pasos completados en este plan:
 {previous_steps_context}
+{history_context}
 
 === PASO ACTUAL A EJECUTAR ===
 - Paso ID: {step_id}
@@ -74,7 +94,7 @@ Para lograr tu objetivo, debes analizar el paso actual y el contexto acumulado d
 
 === INSTRUCCIONES ===
 1. Si el paso requiere usar una herramienta (ej. 'search_chileatiende_knowledge' o 'crear_recordatorio'), debes invocarla utilizando la llamada a función nativa (tool calling) y rellenar sus parámetros utilizando la información del contexto anterior.
-2. Si el paso requiere agendar un recordatorio, extrae el correo del usuario, el trámite y la lista de documentos que se obtuvieron en los pasos de búsqueda anteriores.
+2. Si el paso requiere agendar un recordatorio, extrae el correo del usuario, el trámite y la lista de documentos que se obtuvieron en los pasos de búsqueda anteriores de este plan o directamente del historial de conversación general (si ya fueron provistos en el chat).
 3. Si el paso actual no requiere ninguna herramienta ('none'), simplemente describe brevemente el resultado o responde indicando qué falta.
 """
 
@@ -177,7 +197,7 @@ def get_response(
     messages_planner.append({"role": "user", "content": user_message})
     
     try:
-        planner_resp = client.chat.completions.create(
+        planner_resp = call_groq_with_retry(
             model=model,
             messages=messages_planner,
             temperature=0.1,
@@ -220,10 +240,19 @@ def get_response(
             "tool": tool_expected
         })
         
+        # Cargar historial para el ejecutor
+        history_context = ""
+        if history:
+            history_context = "\n=== HISTORIAL CONVERSACIONAL GENERAL ===\n"
+            for m in history[-6:]:
+                role = "Usuario" if m.get("role") == "user" else "Asistente"
+                history_context += f"- {role}: {m.get('content')}\n"
+
         # Generar prompt del Ejecutor para este paso específico
         executor_sys_prompt = SYSTEM_EXECUTOR_PROMPT.format(
             user_message=user_message,
             previous_steps_context=previous_steps_context or "Ninguno aún.",
+            history_context=history_context,
             step_id=step_id,
             step_description=step_desc,
             tool_expected=tool_expected
@@ -236,7 +265,7 @@ def get_response(
         
         try:
             # Llamar al ejecutor con las herramientas habilitadas
-            executor_resp = client.chat.completions.create(
+            executor_resp = call_groq_with_retry(
                 model=model,
                 messages=executor_messages,
                 tools=TOOLS,
@@ -345,7 +374,7 @@ def get_response(
     messages_synthesizer.append({"role": "user", "content": user_message})
     
     try:
-        final_resp = client.chat.completions.create(
+        final_resp = call_groq_with_retry(
             model=model,
             messages=messages_synthesizer,
             temperature=0.3

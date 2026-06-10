@@ -10,7 +10,7 @@ from app.services.chat_service import (
     cargar_historial_db,
     borrar_historial_db,
 )
-from app.services.plan_execute_agent import get_response
+from app.services.langgraph_agent import get_response
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 
