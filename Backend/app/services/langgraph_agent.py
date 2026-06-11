@@ -68,13 +68,63 @@ class AgentState(TypedDict):
     final_response: str
     trace: List[Dict[str, Any]]
 
+def generar_mqr(user_query: str) -> List[str]:
+    prompt = f"""
+    Consulta original:
+    {user_query}
+
+    Genera EXACTAMENTE 3 consultas de búsqueda para un sistema RAG.
+
+    La primera consulta debe ser:
+    - Una versión formal e institucional.
+
+    La segunda consulta debe ser:
+    - Una versión enfocada en requisitos, documentos o antecedentes necesarios.
+
+    La tercera consulta debe ser:
+    - Una versión semántica o técnica utilizando términos relacionados.
+
+    Reglas obligatorias:
+    - Una consulta por línea.
+    - No expliques nada.
+    - No justifiques las consultas.
+    - No uses numeración.
+    - No uses viñetas.
+    - No uses etiquetas como <think>.
+    - Devuelve únicamente las 3 consultas.
+    """
+    try:
+        model = os.environ["GROQ_MODEL"]
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3
+        )
+        texto = resp.choices[0].message.content.strip()
+
+        if "</think>" in texto:
+            texto = texto.split("</think>", 1)[1]
+
+        variantes = [
+            linea.strip()
+            for linea in texto.splitlines()
+            if linea.strip()
+        ]
+
+        variantes = variantes[:3]
+
+        return variantes + [user_query]
+    except Exception as e:
+        print(f"Error en generación MQR: {e}")
+        return [user_query]
+
 # ==========================================
 # 2. DEFINICIÓN DE NODOS
 # ==========================================
 
 # NODE 1: Classify Intent (LLM-based)
 def classify_intent(state: AgentState) -> Dict[str, Any]:
-    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    model = os.environ["GROQ_MODEL"]
     user_query = state.get("user_query", "")
     history = state.get("history", [])
 
@@ -103,6 +153,8 @@ Debes responder ÚNICAMENTE con un objeto JSON válido que contenga las claves "
 
 Ejemplos de salida:
 {"intent": "INFO_QUERY", "requires_rag": true}
+{"intent": "CREATE_REMINDER", "requires_rag": true}
+{"intent": "OUT_OF_SCOPE", "requires_rag": false}
 {"intent": "CREATE_REMINDER", "requires_rag": false}"""
 
     messages = [
@@ -178,14 +230,24 @@ Ejemplos de salida:
         "trace": new_trace
     }
 
-
 # NODE 2: Retrieve RAG (Deterministic)
 def retrieve_rag(state: AgentState) -> Dict[str, Any]:
     user_query = state.get("user_query", "")
     
-    # Ejecutar búsqueda semántica local usando RAGService
-    logger.info(f"Buscando en ChromaDB para: {user_query}")
-    rag_context = rag_service.get_knowledge(user_query, k=3)
+    logger.info(f"Generando MQR para: {user_query}")
+    queries = generar_mqr(user_query)
+    logger.info(f"Queries MQR: {queries}")
+
+    # Ejecutar búsqueda semántica para cada variante
+    contexts = []
+
+    for query in queries:
+        contexto_parcial = rag_service.get_knowledge(query, k=3)
+
+        if contexto_parcial:
+            contexts.append(contexto_parcial.strip())
+
+    rag_context = "\n\n".join(contexts)
     
     new_trace = state.get("trace", []).copy()
     new_trace.append({
@@ -195,17 +257,26 @@ def retrieve_rag(state: AgentState) -> Dict[str, Any]:
         "tool_expected": "search_chileatiende_knowledge"
     })
     new_trace.append({
+        "type": "mqr_generated",
+        "queries": queries
+    })
+    new_trace.append({
         "type": "tool_call",
         "step_id": 2,
         "function": "search_chileatiende_knowledge",
-        "arguments": {"query": user_query}
+        "arguments": {
+            "original_query": user_query,
+            "mqr_queries": queries
+        }
     })
     new_trace.append({
         "type": "tool_message",
         "step_id": 2,
-        "result": f"Se recuperaron {len(rag_context)} caracteres del RAG."
+        "result": (
+            f"MQR generó {len(queries)} consultas. "
+            f"Se recuperaron {len(rag_context)} caracteres del RAG."
+        )
     })
-
     return {
         "rag_context": rag_context,
         "trace": new_trace
@@ -214,7 +285,7 @@ def retrieve_rag(state: AgentState) -> Dict[str, Any]:
 
 # NODE 3: Extract Reminder Details (LLM-based)
 def extract_reminder_details(state: AgentState) -> Dict[str, Any]:
-    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    model = os.environ["GROQ_MODEL"]
     user_query = state.get("user_query", "")
     history = state.get("history", [])
     rag_context = state.get("rag_context", "")
@@ -428,7 +499,7 @@ def create_calendar_event(state: AgentState) -> Dict[str, Any]:
 
 # NODE 6: Synthesize Response (LLM-based)
 def synthesize_response(state: AgentState) -> Dict[str, Any]:
-    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    model = os.environ["GROQ_MODEL"]
     user_query = state.get("user_query", "")
     history = state.get("history", [])
     intent = state.get("intent", "INFO_QUERY")

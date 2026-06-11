@@ -240,7 +240,7 @@ El backend de FastAPI toma la pregunta y la envía al LLM solicitando la estruct
 ```json
 // POST al LLM (Planner)
 {
-  "model": "llama-3.3-70b-versatile",
+  "model": "qwen/qwen3-32b",
   "messages": [
     { "role": "system", "content": "Eres el Planificador Oficial de ChileAtiende... [SISTEMA]: La fecha y hora actual del sistema es: Lunes, 2026-06-08 09:00:00." },
     { "role": "user", "content": "Hola, necesito saber qué papeles piden para renovar la cédula de identidad y por favor agendame un recordatorio para mañana a las 11 AM al correo ciudadano@ejemplo.cl" }
@@ -276,7 +276,7 @@ El motor de Python toma el **Paso 1** y envía la solicitud al Ejecutor con las 
 ```json
 // POST al LLM (Ejecutor - Paso 1)
 {
-  "model": "llama-3.3-70b-versatile",
+  "model": "qwen/qwen3-32b",
   "messages": [
     { 
       "role": "system", 
@@ -324,7 +324,7 @@ Python actualiza el contexto del historial y llama al Ejecutor para resolver el 
 ```json
 // POST al LLM (Ejecutor - Paso 2)
 {
-  "model": "llama-3.3-70b-versatile",
+  "model": "qwen/qwen3-32b",
   "messages": [
     { 
       "role": "system", 
@@ -372,7 +372,7 @@ Python consolida los resultados de todos los pasos y llama al Sintetizador.
 ```json
 // POST al LLM (Synthesizer)
 {
-  "model": "llama-3.3-70b-versatile",
+  "model": "qwen/qwen3-32b",
   "messages": [
     {
       "role": "system",

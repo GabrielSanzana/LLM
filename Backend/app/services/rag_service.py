@@ -29,6 +29,7 @@ class RAGService:
 
     def get_knowledge(self, query: str, k: int = 3) -> str:
         docs = []
+
         try:
             docs = self.vectorstore.max_marginal_relevance_search(
                 query,
@@ -42,15 +43,34 @@ class RAGService:
             return ""
 
         if not docs:
+            print(f"[RAG] No se encontraron resultados para: '{query}'")
             return ""
 
+        print("\n" + "=" * 100)
+        print(f"[RAG QUERY] {query}")
+        print(f"[RAG] Recuperados {len(docs)} chunks")
+        print("=" * 100)
+
         parts = []
-        for d in docs:
+
+        for i, d in enumerate(docs, start=1):
             source = d.metadata.get("source_file", "Documento Oficial")
             page = d.metadata.get("page", "?")
             text = (d.page_content or "").strip()
 
+            print(f"\n[RAG RESULTADO {i}]")
+            print(f"Documento : {source}")
+            print(f"Página     : {page}")
+            print("Chunk:")
+            print("-" * 80)
+            print(text[:1000])  # evita inundar la consola
+            print("-" * 80)
+
             if text:
-                parts.append(f"[Fuente: {source} | pág. {page}]\n{text}")
+                parts.append(
+                    f"[Fuente: {source} | pág. {page}]\n{text}"
+                )
+
+        print("=" * 100 + "\n")
 
         return "\n\n".join(parts)

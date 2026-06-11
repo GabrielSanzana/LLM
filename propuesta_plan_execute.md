@@ -105,7 +105,7 @@ def get_response_plan_execute(
     user_message: str,
     history: Optional[List[Dict[str, str]]] = None
 ) -> Dict[str, Any]:
-    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    model = os.environ["GROQ_MODEL"]
     trace = []
     
     # 1. GENERAR EL PLAN

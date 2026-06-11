@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
+import traceback
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.models.schemas import ChatRequest
@@ -60,6 +61,7 @@ def chat_endpoint(request: ChatRequest):
 
         return {"status": "success", "response": response_text, "trace": result.get("trace", [])}
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
