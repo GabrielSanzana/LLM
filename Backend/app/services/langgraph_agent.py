@@ -345,6 +345,14 @@ Los campos a extraer son:
 - Historial de la conversación (busca aquí los documentos y el trámite si el RAG anterior está vacío):
 {history_context}
 
+=== REGLAS DE ARITMÉTICA DE FECHAS (CRÍTICO) ===
+Usa la fecha y hora actual del servidor ({current_time_str}) para realizar los siguientes cálculos con absoluta precisión matemática:
+1. "hoy": Usa la misma fecha del servidor (YYYY-MM-DD).
+2. "mañana": Suma exactamente 1 día a la fecha del servidor. Si el servidor indica que hoy es Sábado 20 de Junio de 2026, "mañana" es estrictamente el Domingo 21 de Junio de 2026 (2026-06-21). NO saltes los fines de semana ni asumas días hábiles comerciales a menos que el usuario lo pida explícitamente.
+3. "pasado mañana": Suma exactamente 2 días a la fecha del servidor.
+4. "el lunes / este lunes": Encuentra la fecha del próximo lunes inmediato en el calendario.
+5. "a la misma hora": Copia los minutos y horas de la marca de tiempo del servidor (HH:MM:SS).
+
 === VALORES EXTRAÍDOS ANTERIORMENTE ===
 {json.dumps(current_details, indent=2)}
 
