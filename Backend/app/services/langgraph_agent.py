@@ -59,11 +59,11 @@ def call_groq_with_retry(**kwargs) -> Any:
 class AgentState(TypedDict):
     user_query: str
     history: List[Dict[str, str]]
-    intent: str  # "INFO_QUERY", "CREATE_REMINDER", "OUT_OF_SCOPE"
+    intent: str 
     requires_rag: bool
     rag_context: str
-    reminder_details: Dict[str, Any]  # {"tramite": ..., "fecha_hora": ..., "email": ..., "documentos": ...}
-    validation_status: str  # "valid", "missing_info", "invalid_format"
+    reminder_details: Dict[str, Any]  
+    validation_status: str 
     validation_errors: List[str]
     retry_count: int
     feedback_message: Optional[str]
