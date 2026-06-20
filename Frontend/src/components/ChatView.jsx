@@ -100,6 +100,13 @@ export default function ChatView({ switchView }) {
             });
             console.groupEnd();
           }
+          else if (step.type === "system_tool_call") {
+            console.log(
+              `%c⚙️ [Herramienta Sistema: ${step.tool}]%c: ${step.result}`,
+              "font-weight: bold; color: #a855f7;",
+              ""
+            );
+          }
           else if (step.type === "executing_step") {
             console.group(`%c🚀 Ejecutando Paso ${step.step_id}: "${step.description}"`, "color: #fb923c; font-weight: bold;");
           }
@@ -185,7 +192,7 @@ export default function ChatView({ switchView }) {
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-8">
               <p className="text-gray-400 font-medium">Escribe tu consulta sobre el Registro Civil...</p>
-              <p className="text-xs text-gray-400 max-w-xs mt-1">Por ejemplo: requisitos para una denuncia, trámites de matrimonio o solicita recordatorios.</p>
+              <p className="text-xs text-gray-400 max-w-xs mt-1">Por ejemplo: requisitos para una denuncia, trámites de matrimonio. ¡Recuerda que también puedo agendarte recordatorios en tu calendario!</p>
             </div>
           ) : (
             messages.map((m, i) => (

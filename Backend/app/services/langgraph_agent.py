@@ -13,7 +13,9 @@ backend_dir = file_path.parents[2]
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
+# pyrefly: ignore [missing-import]
 from groq import Groq
+# pyrefly: ignore [missing-import]
 from langgraph.graph import StateGraph, END
 
 # Import existing services
@@ -66,6 +68,7 @@ class AgentState(TypedDict):
     retry_count: int
     feedback_message: Optional[str]
     final_response: str
+    system_time: str
     trace: List[Dict[str, Any]]
 
 def generar_mqr(user_query: str) -> List[str]:
@@ -122,11 +125,31 @@ def generar_mqr(user_query: str) -> List[str]:
 # 2. DEFINICIÓN DE NODOS
 # ==========================================
 
+# NODE 0: Get System DateTime (Deterministic / System Tool Node)
+def get_system_datetime(state: AgentState) -> Dict[str, Any]:
+    dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+    ahora = datetime.now()
+    nombre_dia = dias_semana[ahora.weekday()]
+    current_time_str = f"{nombre_dia}, {ahora.strftime('%Y-%m-%d %H:%M:%S')}"
+    
+    new_trace = state.get("trace", []).copy()
+    new_trace.append({
+        "type": "system_tool_call",
+        "tool": "get_system_datetime",
+        "result": f"Fecha y hora del servidor obtenida: {current_time_str}"
+    })
+    
+    return {
+        "system_time": current_time_str,
+        "trace": new_trace
+    }
+
 # NODE 1: Classify Intent (LLM-based)
 def classify_intent(state: AgentState) -> Dict[str, Any]:
     model = os.environ["GROQ_MODEL"]
     user_query = state.get("user_query", "")
     history = state.get("history", [])
+    system_time = state.get("system_time", "")
 
     history_context = ""
     if history:
@@ -135,7 +158,9 @@ def classify_intent(state: AgentState) -> Dict[str, Any]:
             role = "Usuario" if msg.get("role") == "user" else "Asistente"
             history_context += f"- {role}: {msg.get('content')}\n"
 
-    system_prompt = """Eres el Clasificador de Intenciones y Necesidades de ChileAtiende. Tu tarea es analizar la consulta del usuario y el historial reciente para clasificar la intención actual y decidir si es obligatorio realizar una consulta a la base de conocimientos RAG.
+    system_prompt = f"""Eres el Clasificador de Intenciones y Necesidades de ChileAtiende. Tu tarea es analizar la consulta del usuario y el historial reciente para clasificar la intención actual y decidir si es obligatorio realizar una consulta a la base de conocimientos RAG.
+
+[SISTEMA]: La fecha y hora actual del servidor es: {system_time}.
 
 Opciones de "intent":
 1. "INFO_QUERY": El usuario realiza una pregunta informativa (requisitos, costos, plazos o detalles de trámites oficiales de ChileAtiende / Registro Civil).
@@ -152,10 +177,10 @@ REGLAS DE SALIDA:
 Debes responder ÚNICAMENTE con un objeto JSON válido que contenga las claves "intent" y "requires_rag". No escribas explicaciones antes ni después del JSON.
 
 Ejemplos de salida:
-{"intent": "INFO_QUERY", "requires_rag": true}
-{"intent": "CREATE_REMINDER", "requires_rag": true}
-{"intent": "OUT_OF_SCOPE", "requires_rag": false}
-{"intent": "CREATE_REMINDER", "requires_rag": false}"""
+{{"intent": "INFO_QUERY", "requires_rag": true}}
+{{"intent": "CREATE_REMINDER", "requires_rag": true}}
+{{"intent": "OUT_OF_SCOPE", "requires_rag": false}}
+{{"intent": "CREATE_REMINDER", "requires_rag": false}}"""
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -292,11 +317,13 @@ def extract_reminder_details(state: AgentState) -> Dict[str, Any]:
     feedback_message = state.get("feedback_message", "")
     current_details = state.get("reminder_details", {}) or {}
 
-    # Formatear fecha y hora actual del sistema
-    dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-    ahora = datetime.now()
-    nombre_dia = dias_semana[ahora.weekday()]
-    current_time_str = f"{nombre_dia}, {ahora.strftime('%Y-%m-%d %H:%M:%S')}"
+    # Formatear fecha y hora actual del sistema (desde el estado, con fallback)
+    current_time_str = state.get("system_time", "")
+    if not current_time_str:
+        dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+        ahora = datetime.now()
+        nombre_dia = dias_semana[ahora.weekday()]
+        current_time_str = f"{nombre_dia}, {ahora.strftime('%Y-%m-%d %H:%M:%S')}"
 
     history_context = ""
     if history:
@@ -526,7 +553,12 @@ Aplica la regla de Escenario C: responde de forma educada pero cortante indicand
 Responde en base a la información oficial recuperada en el RAG:
 {rag_context}
 
-Sintetiza la respuesta detallando los requisitos, canales de atención, costos y enlaces oficiales si existen. Si el RAG no arrojó información útil pero corresponde legítimamente al ámbito estatal de Chile, brinda una orientación general cordial, sugiriendo verificar en los canales directos del organismo pertinente o llamando al Call Center 101."""
+Sintetiza la respuesta detallando los requisitos, canales de atención, costos y enlaces oficiales si existen. Si el RAG no arrojó información útil pero corresponde legítimamente al ámbito estatal de Chile, brinda una orientación general cordial, sugiriendo verificar en los canales directos del organismo pertinente o llamando al Call Center 101.
+
+=== INVITACIÓN A RECORDATORIO (OBLIGATORIA) ===
+Al final de tu respuesta, debes invitar de forma proactiva y cordial al usuario consultándole si le gustaría que le crees un recordatorio para realizar este trámite en su Google Calendar personal. Usa una frase similar a:
+"¿Te gustaría que te cree un recordatorio para este trámite en tu Google Calendar? Solo indícame la fecha, hora y tu correo electrónico."
+Esto es muy importante para incentivar el uso del asistente."""
 
     else:  # CREATE_REMINDER
         if validation_status == "valid":
@@ -627,6 +659,7 @@ def route_after_validation(state: AgentState) -> Literal["create_calendar_event"
 workflow = StateGraph(AgentState)
 
 # Agregar nodos al grafo
+workflow.add_node("get_system_datetime", get_system_datetime)
 workflow.add_node("classify_intent", classify_intent)
 workflow.add_node("retrieve_rag", retrieve_rag)
 workflow.add_node("extract_reminder_details", extract_reminder_details)
@@ -635,7 +668,10 @@ workflow.add_node("create_calendar_event", create_calendar_event)
 workflow.add_node("synthesize_response", synthesize_response)
 
 # Configurar punto de entrada
-workflow.set_entry_point("classify_intent")
+workflow.set_entry_point("get_system_datetime")
+
+# Conectar primer nodo de sistema con el clasificador
+workflow.add_edge("get_system_datetime", "classify_intent")
 
 # Configurar aristas y enrutamiento dinámico
 workflow.add_conditional_edges(
@@ -701,6 +737,7 @@ def get_response(
         "retry_count": 0,
         "feedback_message": None,
         "final_response": "",
+        "system_time": "",
         "trace": []
     }
     
@@ -767,6 +804,7 @@ if __name__ == "__main__":
             "retry_count": 0,
             "feedback_message": None,
             "final_response": "",
+            "system_time": "",
             "trace": []
         }
         
@@ -775,6 +813,8 @@ if __name__ == "__main__":
             # Obtener el nombre del nodo ejecutado y su estado parcial
             for node_name, partial_state in output.items():
                 print(f" [NODO EJECUTADO]: {node_name}")
+                if "system_time" in partial_state:
+                    print(f"   ↳ Hora del servidor obtenida: {partial_state['system_time']}")
                 if "intent" in partial_state:
                     print(f"   ↳ Intento clasificado: {partial_state['intent']}")
                 if "requires_rag" in partial_state:

@@ -8,12 +8,13 @@ Below is the detailed design, flow, and instructions for execution and verificat
 
 ## 1. State Machine Architecture & Flow
 
-The state machine is driven by a global state (`AgentState`) storing intermediate computations, extracted details, validation statuses, and errors. It consists of **6 nodes** (3 LLM-based, 3 deterministic/tool) and dynamic conditional edges.
+The state machine is driven by a global state (`AgentState`) storing intermediate computations, extracted details, validation statuses, and errors. It consists of **7 nodes** (3 LLM-based, 4 deterministic/system/tool nodes) and dynamic conditional edges.
 
 ### Mermaid Diagram
 ```mermaid
 graph TD
-    Start([__start__]) --> classify[classify_intent]
+    Start([__start__]) --> system_time[get_system_datetime]
+    system_time --> classify[classify_intent]
     
     classify -->|OUT_OF_SCOPE| synth[synthesize_response]
     classify -->|INFO_QUERY or CREATE_REMINDER with requires_rag=True| rag[retrieve_rag]
@@ -34,6 +35,7 @@ graph TD
     
     style Start fill:#1b5e20,stroke:#333,stroke-width:1px,color:#fff
     style End fill:#b71c1c,stroke:#333,stroke-width:1px,color:#fff
+    style system_time fill:#ef6c00,stroke:#333,stroke-width:1px,color:#fff
     style classify fill:#1565c0,stroke:#333,stroke-width:1px,color:#fff
     style extract fill:#1565c0,stroke:#333,stroke-width:1px,color:#fff
     style synth fill:#1565c0,stroke:#333,stroke-width:1px,color:#fff
@@ -43,12 +45,13 @@ graph TD
 ```
 
 ### Specialized Nodes
-1. **`classify_intent` (LLM-based)**: Inspects query & history to assign `INFO_QUERY`, `CREATE_REMINDER`, or `OUT_OF_SCOPE`. It also determines `requires_rag` (True/False) by checking if the required procedure details are already present in the history.
-2. **`retrieve_rag` (Deterministic/Tool)**: Queries ChromaDB via `RAGService` to retrieve official procedure documentation (skipped if `requires_rag` is False).
-3. **`extract_reminder_details` (LLM-based)**: Dynamically extracts procedure name, date/time (interpreting relative values against current system time), email, and requirements. If `rag_context` is empty, it searches directly inside the conversation history to extract documents/requirements.
-4. **`validate_details` (Deterministic)**: Verifies email matches regex, verifies date/time can be parsed, and checks for missing information. If format errors occur, it increments a retry counter and generates helpful guidance for the LLM.
-5. **`create_calendar_event` (Deterministic/Tool)**: Calls `GoogleCalendarService` to schedule the booking.
-6. **`synthesize_response` (LLM-based)**: Formulates the final, clean conversational response to the citizen (refusing out-of-scope queries, presenting RAG information, confirming calendar bookings, or requesting clarification).
+1. **`get_system_datetime` (Deterministic/System Tool Node)**: Fetches the server's current date and time (e.g. Lunes, 2026-06-20 17:35:21) and updates the state. This makes subsequent nodes deterministic and easy to test.
+2. **`classify_intent` (LLM-based)**: Inspects query & history, combined with the server's time, to assign `INFO_QUERY`, `CREATE_REMINDER`, or `OUT_OF_SCOPE`. It also determines `requires_rag` (True/False) by checking if the required procedure details are already present in the history.
+3. **`retrieve_rag` (Deterministic/Tool)**: Queries ChromaDB via `RAGService` to retrieve official procedure documentation (skipped if `requires_rag` is False).
+4. **`extract_reminder_details` (LLM-based)**: Dynamically extracts procedure name, date/time (interpreting relative values against the system time stored in the state), email, and requirements. If `rag_context` is empty, it searches directly inside the conversation history to extract documents/requirements.
+5. **`validate_details` (Deterministic)**: Verifies email matches regex, verifies date/time can be parsed, and checks for missing information. If format errors occur, it increments a retry counter and generates helpful guidance for the LLM.
+6. **`create_calendar_event` (Deterministic/Tool)**: Calls `GoogleCalendarService` to schedule the booking.
+7. **`synthesize_response` (LLM-based)**: Formulates the final, clean conversational response to the citizen (refusing out-of-scope queries, presenting RAG information, confirming calendar bookings, or requesting clarification).
 
 ---
 
